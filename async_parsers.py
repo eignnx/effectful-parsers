@@ -69,7 +69,7 @@ class Failure(ParseResult[T], ErrDescribe):
             context = "\n".join(
                 (
                     f"\t* During attempted parsing with `{parser!s}` at '{txt}'..."
-                    for txt, parser in self.trace
+                    for txt, parser in reversed(self.trace)
                 )
             )
             main_error = self.reason.err_describe()
