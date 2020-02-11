@@ -72,9 +72,12 @@ def parser_factory(
     `f`.
     """
 
-    @wraps(f)
     def factory_builder(*args, **kwargs) -> ParserFactory[Eff, Resp, T]:
-        return ParserFactory(lambda: f(*args, **kwargs))
+        @wraps(f)
+        def thunk():
+            return f(*args, **kwargs)
+
+        return ParserFactory(thunk)
 
     return factory_builder
 
