@@ -1,14 +1,15 @@
 from typing import List, Tuple, TypeVar
 
 from async_parsers import (
+    Failure,
     ParserThunk,
     Success,
-    Failure,
     either,
     exactly,
     matches,
-    nat,
     parser_factory,
+    py_float,
+    py_int,
     run_parser,
     separated_nonempty_list,
 )
@@ -33,7 +34,7 @@ print(run_parser(p, "[X, Z, X]"))
 
 @parser_factory
 async def n_bangs():
-    count = await nat()
+    count = await py_int()
     for _ in range(count):
         await exactly("!")
     return count
@@ -44,9 +45,9 @@ assert run_parser(n_bangs(), "3!").failed
 print(run_parser(n_bangs(), "3!"))
 
 
-assert run_parser(nat(), "123").succeeded
-assert run_parser(nat(), "asdf").failed
-print(run_parser(nat(), "asdf"))
+assert run_parser(py_int(), "123").succeeded
+assert run_parser(py_int(), "asdf").failed
+print(run_parser(py_int(), "asdf"))
 
 
 A = TypeVar("A")
@@ -72,7 +73,7 @@ async def delimited(left, target: ParserThunk[T], right) -> T:
 
 
 pair_parser = delimited(
-    exactly("("), separated_pair(nat(), exactly(", "), nat()), exactly(")"),
+    exactly("("), separated_pair(py_int(), exactly(", "), py_int()), exactly(")"),
 )
 
 assert run_parser(pair_parser, "(1, 2)") == Success((1, 2))
@@ -103,6 +104,20 @@ assert run_parser(foo_parser(), "<foxooo>").failed
 print(run_parser(foo_parser(), "<foxooo>"))
 assert run_parser(foo_parser(), "<fooxoo>").failed
 print(run_parser(foo_parser(), "<fooxoo>"))
+
+
+assert run_parser(py_int(), "-123") == Success(-123)
+assert run_parser(py_int(), "0") == Success(0)
+assert run_parser(py_int(), "-0") == Success(0)
+assert run_parser(py_int(), "-").failed
+
+assert run_parser(py_float(), "-123.456") == Success(-123.456)
+assert run_parser(py_float(), "-.456") == Success(-0.456)
+assert run_parser(py_float(), "-123.") == Success(-123.0)
+assert run_parser(py_float(), "123.456") == Success(123.456)
+assert run_parser(py_float(), ".456") == Success(0.456)
+assert run_parser(py_float(), "123.") == Success(123.0)
+assert run_parser(py_float(), "123").failed
 
 
 print()

@@ -324,8 +324,8 @@ class Matches(Effect[str], ErrDescribe):
 
 
 @parser_factory
-async def matches(re_src: Text, **compile_kwargs):
-    return await Matches(re.compile(re_src, **compile_kwargs))
+async def matches(re_src: Text, *compile_args, **compile_kwargs):
+    return await Matches(re.compile(re_src, *compile_args, **compile_kwargs))
 
 
 def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseResult[T]:
@@ -372,9 +372,31 @@ async def separated_nonempty_list(
 
 
 @parser_factory
-async def nat() -> int:
-    def is_digit(ch: str):
-        return ch.isdigit()
-
-    digits = await take_nonempty_while(is_digit, pred_name="is_digit")
+async def py_int() -> int:
+    """
+    Parses a Python int.
+    """
+    # See https://docs.python.org/3/library/re.html#simulating-scanf
+    digits = await matches(r"[-+]?(0[xX][\dA-Fa-f]+|0[0-7]*|\d+)")
     return int(digits)
+
+
+@parser_factory
+async def py_float(allow_special_values: bool = False) -> float:
+    """
+    Parses a Python float. By default, this parser accepts any float literal
+    that is valid in a Python source file. Note that this excludes the special
+    values 'nan', 'inf', and 'Infinity', as those values are constructed
+    repectively by `float('nan')`, `float('inf')`, and `float('Infinity')`. If
+    the `allow_special_values` flag is enabled, then the special values 'nan',
+    'inf' and 'Infinity' will be accepted, emulating the behavior of the builtin
+    `float` function.
+    """
+    if allow_special_values:
+        raise NotImplementedError()
+    # TODO: parse according to actual python float literal syntax.
+    # See https://docs.python.org/3/library/re.html#simulating-scanf
+    digits = await matches(r"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?")
+    if "_" in digits:
+        raise NotImplementedError()
+    return float(digits)

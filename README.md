@@ -1,4 +1,5 @@
 # effectful-parsers
+
 A Python 3 parser-combinator library which uses coroutines to sequence parsers.
 
 **WORK IN PROGRESS!**
@@ -8,19 +9,20 @@ A Python 3 parser-combinator library which uses coroutines to sequence parsers.
 A coroutine is defined by it's runtime. If you pass a coroutine to an event loop, it has the ability to perform asynchronous IO operations. This library provides a runtime that knows how to parse text as guided by the coroutine.
 
 ## Example
+
 ### Parsing Number Pair
 
-In this example, `pair_parser` can parse a pair of numbers, like `(123, 987)`. 
+In this example, `pair_parser` can parse a pair of numbers, like `(123, 987)`.
 
 ```python
-from async_parsers import parser_factory, exactly, nat, run_parser, Success
+from async_parsers import parser_factory, exactly, py_int, run_parser, Success
 
 @parser_factory
 async def pair_parser():
     await exactly("(")
-    first = await nat()
+    first = await py_int()
     await exactly(", ")
-    second = await nat()
+    second = await py_int()
     await exactly(")")
     return (first, second)
 
@@ -45,7 +47,7 @@ async def delimited(left, target, right):
     return value
 
 pair_parser = delimited(
-    exactly("("), separated_pair(nat(), exactly(", "), nat()), exactly(")"),
+    exactly("("), separated_pair(py_int(), exactly(", "), py_int()), exactly(")"),
 )
 ```
 
@@ -54,11 +56,11 @@ pair_parser = delimited(
 This parser will first parse a number, then attempts to parse that number of exclamation points.
 
 ```python
-from async_parsers import parser_factory, nat, exactly, run_parser, Success
+from async_parsers import parser_factory, py_int, exactly, run_parser, Success
 
 @parser_factory
 async def n_bangs():
-    count = await nat()
+    count = await py_int()
     for _ in range(count):
         await exactly("!")
     return count
