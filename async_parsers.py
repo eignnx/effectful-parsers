@@ -24,6 +24,7 @@ from typing import (
 Eff = TypeVar("Eff")
 Resp = TypeVar("Resp")
 T = TypeVar("T")
+U = TypeVar("U")
 
 
 class ErrDescribe(ABC):
@@ -138,6 +139,13 @@ class ParserFactory(Generic[Eff, Resp, T]):
         kwargs = ", ".join((f"{name}={value!r}" for name, value in self.kwargs.items()))
         args_and_kwargs = f"{args}, {kwargs}" if kwargs else args
         return f"{factory_name}({args_and_kwargs})"
+
+    def map(self, f: Callable[[T], U]) -> ParserFactory[Eff, Resp, U]:
+        @parser_factory
+        async def map(f, p) -> U:
+            return await Map(f, p)
+
+        return map(f, self)
 
 
 def parser_factory(
@@ -349,6 +357,19 @@ class Optional_(Effect[Union[T, Default]], Generic[Eff, Resp, T, Default]):
 @parser_factory
 async def optional(parser: ParserThunk[T], default=None) -> Union[T, Default]:
     return await Optional_(parser, default)
+
+
+class Map(Effect[U], Generic[Eff, Resp, T, U]):
+    def __init__(self, f: Callable[[T], U], parser: ParserFactory[Eff, Resp, T]):
+        self.f = f
+        self.parser = parser
+
+    def perform(self, txt: str) -> ParseResult[U]:
+        res = run_parser(self.parser, txt)
+        if isinstance(res, Success):
+            return Success(parsed=self.f(res.parsed), rest=res.rest)
+        else:
+            return cast(ParseResult[U], res)
 
 
 def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseResult[T]:

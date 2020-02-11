@@ -126,6 +126,10 @@ assert run_parser(optional(exactly("foo"), default=-1), "bar") == Success(
     -1, rest="bar"
 )
 
+assert run_parser(py_int().map(lambda x: x * x), "12") == Success(144)
+assert run_parser(py_int().map(lambda x: x * x), "x").failed
+print(run_parser(py_int().map(lambda x: x * x), "x"))
+
 print()
 print("--------------------")
 print("✅ All tests passed.")
