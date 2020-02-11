@@ -1,4 +1,5 @@
-from typing import List, Tuple, TypeVar
+from typing import List, Tuple, TypeVar, cast
+import math
 
 from async_parsers import (
     Failure,
@@ -9,8 +10,10 @@ from async_parsers import (
     matches,
     optional,
     parser_factory,
+    preceded,
     py_float,
     py_int,
+    recognize,
     run_parser,
     separated_nonempty_list,
 )
@@ -113,12 +116,27 @@ assert run_parser(py_int(), "-0") == Success(0)
 assert run_parser(py_int(), "-").failed
 
 assert run_parser(py_float(), "-123.456") == Success(-123.456)
+assert run_parser(py_float(), "-0.456") == Success(-0.456)
 assert run_parser(py_float(), "-.456") == Success(-0.456)
 assert run_parser(py_float(), "-123.") == Success(-123.0)
 assert run_parser(py_float(), "123.456") == Success(123.456)
+assert run_parser(py_float(), "0.456") == Success(0.456)
 assert run_parser(py_float(), ".456") == Success(0.456)
 assert run_parser(py_float(), "123.") == Success(123.0)
-# assert run_parser(py_float(), "123").failed
+assert run_parser(py_float(), "123.4e5") == Success(123.4e5)
+assert run_parser(py_float(), ".4e5") == Success(0.4e5)
+assert run_parser(py_float(), "1_2_3.4e5") == Success(1_2_3.4e5)
+assert run_parser(py_float(), "1_2_3.4_4e1_1") == Success(1_2_3.4_4e1_1)
+assert run_parser(py_float(), "123").failed
+for x in ["inf", "-inf", "Infinity", "-Infinity"]:
+    assert run_parser(py_float(allow_special_values=True), x) == Success(float(x))
+assert math.isnan(
+    cast(Success, run_parser(py_float(allow_special_values=True), "nan")).parsed
+)
+assert math.isnan(
+    cast(Success, run_parser(py_float(allow_special_values=True), "-nan")).parsed
+)
+
 
 assert run_parser(optional(exactly("foo")), "foo") == Success("foo")
 assert run_parser(optional(exactly("foo")), "bar") == Success(None, rest="bar")
@@ -129,6 +147,10 @@ assert run_parser(optional(exactly("foo"), default=-1), "bar") == Success(
 assert run_parser(py_int().map(lambda x: x * x), "12") == Success(144)
 assert run_parser(py_int().map(lambda x: x * x), "x").failed
 print(run_parser(py_int().map(lambda x: x * x), "x"))
+
+assert run_parser(recognize(preceded(exactly("#"), py_int())), "#123") == Success(
+    "#123"
+)
 
 print()
 print("--------------------")

@@ -372,6 +372,28 @@ class Map(Effect[U], Generic[Eff, Resp, T, U]):
             return cast(ParseResult[U], res)
 
 
+@dataclass
+class Recognize(Effect[str]):
+    parser: ParserFactory
+
+    def perform(self, txt: str) -> ParseResult[str]:
+        res = run_parser(self.parser, txt)
+        if isinstance(res, Success):
+            diff = len(txt) - len(res.rest)
+            return Success(parsed=txt[:diff], rest=res.rest)
+        else:
+            return cast(ParseResult[str], res)
+
+
+@parser_factory
+async def recognize(parser):
+    """
+    Runs the sub-pareser, but discards the result and instead returns the string
+    that was accepted by the sub-parser.
+    """
+    return await Recognize(parser)
+
+
 def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseResult[T]:
     parser = parser_factory.make()
 
@@ -407,6 +429,21 @@ async def preceded(prefix: ParserFactory, target: ParserFactory):
 
 
 @parser_factory
+async def terminated(target: ParserFactory, suffix: ParserFactory):
+    x = await target
+    await suffix
+    return x
+
+
+@parser_factory
+async def sequence(*parsers: ParserFactory):
+    result = []
+    for parser in parsers:
+        result.append(await parser)
+    return result
+
+
+@parser_factory
 async def separated_nonempty_list(
     item: ParserFactory[Eff, Resp, T], sep: ParserFactory
 ) -> List[T]:
@@ -436,11 +473,48 @@ async def py_float(allow_special_values: bool = False) -> float:
     'inf' and 'Infinity' will be accepted, emulating the behavior of the builtin
     `float` function.
     """
-    if allow_special_values:
-        raise NotImplementedError()
-    # TODO: parse according to actual python float literal syntax.
-    # See https://docs.python.org/3/library/re.html#simulating-scanf
-    digits = await matches(r"[-+]?(\d+(\.\d*)?|\.\d+)([eE][-+]?\d+)?")
-    if "_" in digits:
-        raise NotImplementedError()
-    return float(digits)
+
+    # FROM https://docs.python.org/3.9/library/functions.html?highlight=float#float
+    # sign           ::=  "+" | "-"
+    # infinity       ::=  "Infinity" | "inf"
+    # nan            ::=  "nan"
+    # numeric_value  ::=  floatnumber | infinity | nan
+    # numeric_string ::=  [sign] numeric_value
+
+    # From https://docs.python.org/3.9/reference/lexical_analysis.html#floating-point-literals
+    # floatnumber   ::=  pointfloat | exponentfloat
+    # pointfloat    ::=  [digitpart] fraction | digitpart "."
+    # exponentfloat ::=  (digitpart | pointfloat) exponent
+    # digitpart     ::=  digit (["_"] digit)*
+    # fraction      ::=  "." digitpart
+    # exponent      ::=  ("e" | "E") ["+" | "-"] digitpart
+
+    digits = matches(r"\d[_\d]*")
+
+    point_float = either(
+        sequence(digits, exactly("."), digits),
+        sequence(exactly("."), digits),
+        sequence(digits, exactly(".")),
+    )
+
+    @parser_factory
+    async def exponent():
+        await matches(r"[eE]")
+        await matches(r"[+-]?")
+        await digits
+
+    exponent_float = sequence(either(point_float, digits), exponent())
+
+    special_values = (
+        [exactly("nan"), exactly("inf"), exactly("Infinity")]
+        if allow_special_values
+        else []
+    )
+
+    @parser_factory
+    async def py_float_format() -> None:
+        await matches(r"[+-]?")
+        await either(exponent_float, point_float, *special_values)
+
+    float_text = await recognize(py_float_format())
+    return float(float_text)
