@@ -26,6 +26,8 @@ async def list_of_xs() -> List[str]:
 p = list_of_xs()
 assert run_parser(p, "[X]") == Success(["X"])
 assert run_parser(p, "[X, X, X]") == Success(["X", "X", "X"])
+assert run_parser(p, "[X, Z, X]").failed
+print(run_parser(p, "[X, Z, X]"))
 
 
 @parser_factory
