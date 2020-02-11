@@ -1,4 +1,4 @@
-from abc import ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import wraps
 from typing import (
@@ -6,9 +6,9 @@ from typing import (
     Callable,
     Coroutine,
     Generic,
+    Iterable,
     List,
     Optional,
-    Sequence,
     Tuple,
     TypeVar,
     cast,
@@ -86,8 +86,7 @@ def parser_factory(
 ParserThunk = ParserFactory[Any, Any, T]
 
 
-@dataclass
-class Effect(ABC):
+class Effect(Generic[T], ABC):
     """
     An `Effect` is a message object which knows how to be awaited. When it is
     awaited, it simply returns a reference to itself to the runtime. The runtime
@@ -98,15 +97,29 @@ class Effect(ABC):
     def __await__(self):
         return (yield self)
 
+    @abstractmethod
+    def perform(self, txt: str) -> PRes[T]:
+        pass
+
 
 @dataclass
-class Exactly(Effect):
+class Exactly(Effect[str]):
     """
     Succeeds if the input begins with `target`, and fails otherwise. Returns
     `target` when it succeeds.
     """
 
     target: str
+
+    def perform(self, txt: str) -> PRes[str]:
+        target = self.target
+        prefix, parsed, rest = txt.partition(target)
+        if prefix != "" or parsed != target:
+            return None
+        else:
+            send_value = parsed
+            txt = rest
+            return (txt, send_value)
 
 
 @parser_factory
@@ -115,10 +128,23 @@ async def exactly(target: str):
 
 
 @dataclass
-class Many(Effect, Generic[Eff, Resp, T]):
+class Many(Effect[List[T]], Generic[Eff, Resp, T]):
     """Parses 0 or more instances of `parser`. Returns a list of results."""
 
     parser: ParserFactory[Eff, Resp, T]
+
+    def perform(self, txt: str) -> PRes[List[T]]:
+        collected = []
+        while True:
+            res: PRes[T] = run_parser(self.parser, txt)
+            if res:
+                rest, parsed = res
+                collected.append(parsed)
+                txt = rest
+            else:
+                break
+        send_value = collected
+        return (txt, send_value)
 
 
 @parser_factory
@@ -128,7 +154,7 @@ async def many(parser: ParserFactory[Eff, Resp, T]):
 
 # TODO: Make it a dataclass once https://github.com/python/mypy/issues/5485 is
 # resolved.
-class TakeWhile(Effect):
+class TakeWhile(Effect[str]):
     """Consumes input while the char -> bool `predicate` holds."""
 
     def __init__(self, predicate: Callable[[str], bool]):
@@ -138,6 +164,14 @@ class TakeWhile(Effect):
         cls_name = self.__class__.__name__
         return f"{cls_name}(predicate={self.predicate!r})"
 
+    def perform(self, txt: str) -> PRes[str]:
+        i = 0  # Default in case txt is empty
+        for i, ch in enumerate(txt):
+            if not self.predicate(ch):
+                break
+        send_value, txt = txt[:i], txt[i:]
+        return (txt, send_value)
+
 
 @parser_factory
 async def take_while(predicate: Callable[[str], bool]):
@@ -145,10 +179,22 @@ async def take_while(predicate: Callable[[str], bool]):
 
 
 @dataclass
-class Either(Effect, Generic[Eff, Resp, T]):
+class Either(Effect[T], Generic[Eff, Resp, T]):
     """Returns the output of the first parser in `parsers` that succeeds."""
 
-    parsers: Sequence[ParserFactory[Eff, Resp, T]]
+    parsers: Iterable[ParserFactory[Eff, Resp, T]]
+
+    def perform(self, txt: str) -> PRes[T]:
+        for sub_parser in self.parsers:
+            res = run_parser(sub_parser, txt)
+            if res:
+                rest, parsed = res
+                txt = rest
+                send_value = parsed
+                return (txt, send_value)
+        else:
+            # If none of the parsers succeed...
+            return None
 
 
 @parser_factory
@@ -167,48 +213,12 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> PRes[T]
         except StopIteration as e:
             return (txt, e.value)
 
-        if isinstance(got, Exactly):
-            target = got.target
-            prefix, parsed, rest = txt.partition(target)
-            if prefix != "" or parsed != target:
-                return None
+        if isinstance(got, Effect):
+            res = got.perform(txt)
+            if res:
+                txt, send_value = res
             else:
-                send_value = cast(Resp, parsed)
-                txt = rest
-
-        elif isinstance(got, Many):
-            sub_parser = got.parser
-            collected = []
-            while True:
-                res: PRes[Any] = run_parser(sub_parser, txt)
-                if res:
-                    rest, parsed = res
-                    collected.append(parsed)
-                    txt = rest
-                else:
-                    break
-            send_value = cast(Resp, collected)
-
-        elif isinstance(got, TakeWhile):
-            predicate = got.predicate
-            i = 0  # Default in case txt is empty
-            for i, ch in enumerate(txt):
-                if not predicate(ch):
-                    break
-            send_value, txt = cast(Resp, txt[:i]), txt[i:]
-
-        elif isinstance(got, Either):
-            for sub_parser in got.parsers:
-                res = run_parser(sub_parser, txt)
-                if res:
-                    rest, parsed = res
-                    txt = rest
-                    send_value = cast(Resp, parsed)
-                    break
-            else:
-                # If none of the parsers succeed...
                 return None
-
         else:
             raise Exception(f"Expected parser object, got {got}")
 
