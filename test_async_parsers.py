@@ -2,6 +2,8 @@ from typing import List, Tuple, TypeVar
 
 from async_parsers import (
     ParserThunk,
+    Success,
+    Failure,
     either,
     exactly,
     nat,
@@ -10,8 +12,6 @@ from async_parsers import (
     separated_nonempty_list,
 )
 
-Eff = TypeVar("Eff")
-Resp = TypeVar("Resp")
 T = TypeVar("T")
 
 
@@ -24,8 +24,8 @@ async def list_of_xs() -> List[str]:
 
 
 p = list_of_xs()
-assert run_parser(p, "[X]") == ("", ["X"])
-assert run_parser(p, "[X, X, X]") == ("", ["X", "X", "X"])
+assert run_parser(p, "[X]") == Success(["X"])
+assert run_parser(p, "[X, X, X]") == Success(["X", "X", "X"])
 
 
 @parser_factory
@@ -36,8 +36,8 @@ async def n_bangs():
     return count
 
 
-assert run_parser(n_bangs(), "12!!!!!!!!!!!!") == ("", 12)
-assert run_parser(n_bangs(), "3!") == None
+assert run_parser(n_bangs(), "12!!!!!!!!!!!!") == Success(12)
+assert run_parser(n_bangs(), "3!") == Failure("")
 
 A = TypeVar("A")
 B = TypeVar("B")
@@ -67,14 +67,14 @@ pair_parser = delimited(
     exactly(")"),
 )
 
-assert run_parser(pair_parser, "(1, 2)") == ("", ("1", "2"))
+assert run_parser(pair_parser, "(1, 2)") == Success(("1", "2"))
 
 
 foo_bar_or_baz = either(exactly("foo"), exactly("bar"), exactly("baz"))
-assert run_parser(foo_bar_or_baz, "foo") == ("", "foo")
-assert run_parser(foo_bar_or_baz, "bar") == ("", "bar")
-assert run_parser(foo_bar_or_baz, "baz") == ("", "baz")
-assert run_parser(foo_bar_or_baz, "qux") == None
+assert run_parser(foo_bar_or_baz, "foo") == Success("foo")
+assert run_parser(foo_bar_or_baz, "bar") == Success("bar")
+assert run_parser(foo_bar_or_baz, "baz") == Success("baz")
+assert run_parser(foo_bar_or_baz, "qux") == Failure("qux")
 
 
 print("✅ All tests passed.")

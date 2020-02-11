@@ -1,13 +1,15 @@
-from abc import ABC, abstractmethod
+from abc import ABC, ABCMeta, abstractmethod, abstractproperty
 from dataclasses import dataclass
 from functools import wraps
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Coroutine,
     Generic,
     Iterable,
     List,
+    NamedTuple,
     Optional,
     Tuple,
     TypeVar,
@@ -18,7 +20,35 @@ Eff = TypeVar("Eff")
 Resp = TypeVar("Resp")
 T = TypeVar("T")
 
-PRes = Optional[Tuple[str, T]]
+
+@dataclass
+class ParseResult(Generic[T]):
+    SUCCESSFUL: ClassVar[bool] = True
+
+    @property
+    def failed(self) -> bool:
+        return not self.SUCCESSFUL
+
+    @property
+    def succeeded(self) -> bool:
+        return self.SUCCESSFUL
+
+
+@dataclass
+class Success(ParseResult[T]):
+    parsed: T
+    rest: str = ""
+
+    SUCCESSFUL: ClassVar[bool] = True
+
+
+@dataclass
+class Failure(ParseResult[T]):
+    rest: str = ""
+
+    SUCCESSFUL: ClassVar[bool] = False
+
+
 ParserCoro = Coroutine[Eff, Optional[Resp], T]
 
 
@@ -98,7 +128,7 @@ class Effect(Generic[T], ABC):
         return (yield self)
 
     @abstractmethod
-    def perform(self, txt: str) -> PRes[T]:
+    def perform(self, txt: str) -> ParseResult[T]:
         pass
 
 
@@ -111,15 +141,13 @@ class Exactly(Effect[str]):
 
     target: str
 
-    def perform(self, txt: str) -> PRes[str]:
+    def perform(self, txt: str) -> ParseResult[str]:
         target = self.target
         prefix, parsed, rest = txt.partition(target)
         if prefix != "" or parsed != target:
-            return None
+            return Failure(rest)
         else:
-            send_value = parsed
-            txt = rest
-            return (txt, send_value)
+            return Success(rest=rest, parsed=parsed)
 
 
 @parser_factory
@@ -133,18 +161,16 @@ class Many(Effect[List[T]], Generic[Eff, Resp, T]):
 
     parser: ParserFactory[Eff, Resp, T]
 
-    def perform(self, txt: str) -> PRes[List[T]]:
+    def perform(self, txt: str) -> ParseResult[List[T]]:
         collected = []
         while True:
-            res: PRes[T] = run_parser(self.parser, txt)
-            if res:
-                rest, parsed = res
-                collected.append(parsed)
-                txt = rest
+            res: ParseResult[T] = run_parser(self.parser, txt)
+            if isinstance(res, Success):
+                collected.append(res.parsed)
+                txt = res.rest
             else:
                 break
-        send_value = collected
-        return (txt, send_value)
+        return Success(rest=txt, parsed=collected)
 
 
 @parser_factory
@@ -164,13 +190,12 @@ class TakeWhile(Effect[str]):
         cls_name = self.__class__.__name__
         return f"{cls_name}(predicate={self.predicate!r})"
 
-    def perform(self, txt: str) -> PRes[str]:
+    def perform(self, txt: str) -> ParseResult[str]:
         i = 0  # Default in case txt is empty
         for i, ch in enumerate(txt):
             if not self.predicate(ch):
                 break
-        send_value, txt = txt[:i], txt[i:]
-        return (txt, send_value)
+        return Success(rest=txt[i:], parsed=txt[:i])
 
 
 @parser_factory
@@ -184,17 +209,14 @@ class Either(Effect[T], Generic[Eff, Resp, T]):
 
     parsers: Iterable[ParserFactory[Eff, Resp, T]]
 
-    def perform(self, txt: str) -> PRes[T]:
+    def perform(self, txt: str) -> ParseResult[T]:
         for sub_parser in self.parsers:
             res = run_parser(sub_parser, txt)
-            if res:
-                rest, parsed = res
-                txt = rest
-                send_value = parsed
-                return (txt, send_value)
+            if res.succeeded:
+                return res
         else:
             # If none of the parsers succeed...
-            return None
+            return Failure(txt)
 
 
 @parser_factory
@@ -202,7 +224,7 @@ async def either(*parsers: ParserFactory[Eff, Resp, T]) -> ParserCoro[Eff, Resp,
     return await Either(parsers)
 
 
-def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> PRes[T]:
+def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseResult[T]:
     parser = parser_factory.make()
 
     send_value: Optional[Resp] = None
@@ -211,14 +233,14 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> PRes[T]
         try:
             got = parser.send(send_value)
         except StopIteration as e:
-            return (txt, e.value)
+            return Success(rest=txt, parsed=e.value)
 
         if isinstance(got, Effect):
             res = got.perform(txt)
-            if res:
-                txt, send_value = res
+            if isinstance(res, Success):
+                txt, send_value = res.rest, res.parsed
             else:
-                return None
+                return res
         else:
             raise Exception(f"Expected parser object, got {got}")
 
