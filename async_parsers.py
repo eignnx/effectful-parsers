@@ -1,5 +1,7 @@
-from abc import ABC, ABCMeta, abstractmethod, abstractproperty
-from dataclasses import dataclass
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from functools import wraps
 from typing import (
     Any,
@@ -13,12 +15,19 @@ from typing import (
     Optional,
     Tuple,
     TypeVar,
+    Union,
     cast,
 )
 
 Eff = TypeVar("Eff")
 Resp = TypeVar("Resp")
 T = TypeVar("T")
+
+
+class ErrDescribe(ABC):
+    @abstractmethod
+    def err_describe(self) -> str:
+        pass
 
 
 @dataclass
@@ -43,10 +52,21 @@ class Success(ParseResult[T]):
 
 
 @dataclass
-class Failure(ParseResult[T]):
-    rest: str = ""
+class Failure(ParseResult[T], ErrDescribe):
+    rest: str
+    reason: Optional[ErrDescribe] = field(default=None)
 
     SUCCESSFUL: ClassVar[bool] = False
+
+    def err_describe(self) -> str:
+        preamble = f"Failure to parse at input '{self.rest}'"
+        if self.reason is None:
+            return preamble
+        else:
+            return f"{preamble} because:\n{self.reason.err_describe()}"
+
+    def __str__(self) -> str:
+        return self.err_describe()
 
 
 ParserCoro = Coroutine[Eff, Optional[Resp], T]
@@ -133,7 +153,7 @@ class Effect(Generic[T], ABC):
 
 
 @dataclass
-class Exactly(Effect[str]):
+class Exactly(Effect[str], ErrDescribe):
     """
     Succeeds if the input begins with `target`, and fails otherwise. Returns
     `target` when it succeeds.
@@ -145,9 +165,12 @@ class Exactly(Effect[str]):
         target = self.target
         prefix, parsed, rest = txt.partition(target)
         if prefix != "" or parsed != target:
-            return Failure(rest)
+            return Failure(rest, reason=self)
         else:
             return Success(rest=rest, parsed=parsed)
+
+    def err_describe(self) -> str:
+        return f"\t - Expected exactly '{self.target}'"
 
 
 @parser_factory
@@ -204,7 +227,7 @@ async def take_while(predicate: Callable[[str], bool]):
 
 
 @dataclass
-class Either(Effect[T], Generic[Eff, Resp, T]):
+class Either(Effect[T], Generic[Eff, Resp, T], ErrDescribe):
     """Returns the output of the first parser in `parsers` that succeeds."""
 
     parsers: Iterable[ParserFactory[Eff, Resp, T]]
@@ -216,7 +239,22 @@ class Either(Effect[T], Generic[Eff, Resp, T]):
                 return res
         else:
             # If none of the parsers succeed...
-            return Failure(txt)
+            return Failure(txt, reason=self)
+
+    def err_describe(self) -> str:
+        names = (parser.factory.__name__ for parser in self.parsers)
+
+        def args(parser_factory: ParserFactory) -> Iterable[str]:
+            factory = parser_factory.factory
+            captured_args_cell = factory.__closure__[0]
+            args_tup = captured_args_cell.cell_contents
+            for arg in args_tup:
+                yield repr(arg)
+
+        arg_lists = (", ".join(args(parser)) for parser in self.parsers)
+        calls = (f"{name}({args})" for name, args in zip(names, arg_lists))
+        ps = "\n".join((f"\t\t- {call}" for call in calls))
+        return f"\t- None of the following parsers succeeded:\n{ps}"
 
 
 @parser_factory
@@ -239,8 +277,8 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseRe
             res = got.perform(txt)
             if isinstance(res, Success):
                 txt, send_value = res.rest, res.parsed
-            else:
-                return res
+            elif isinstance(res, Failure):
+                return Failure(txt, reason=res)
         else:
             raise Exception(f"Expected parser object, got {got}")
 

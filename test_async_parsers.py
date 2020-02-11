@@ -37,7 +37,8 @@ async def n_bangs():
 
 
 assert run_parser(n_bangs(), "12!!!!!!!!!!!!") == Success(12)
-assert run_parser(n_bangs(), "3!") == Failure("")
+assert run_parser(n_bangs(), "3!").failed
+print(run_parser(n_bangs(), "3!"))
 
 A = TypeVar("A")
 B = TypeVar("B")
@@ -74,7 +75,8 @@ foo_bar_or_baz = either(exactly("foo"), exactly("bar"), exactly("baz"))
 assert run_parser(foo_bar_or_baz, "foo") == Success("foo")
 assert run_parser(foo_bar_or_baz, "bar") == Success("bar")
 assert run_parser(foo_bar_or_baz, "baz") == Success("baz")
-assert run_parser(foo_bar_or_baz, "qux") == Failure("qux")
+assert run_parser(foo_bar_or_baz, "qux").failed
+print(run_parser(foo_bar_or_baz, "qux"))
 
 
 print("✅ All tests passed.")
