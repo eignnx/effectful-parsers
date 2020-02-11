@@ -1,4 +1,7 @@
+from typing import List, Tuple, TypeVar
+
 from async_parsers import (
+    ParserThunk,
     either,
     exactly,
     nat,
@@ -7,9 +10,13 @@ from async_parsers import (
     separated_nonempty_list,
 )
 
+Eff = TypeVar("Eff")
+Resp = TypeVar("Resp")
+T = TypeVar("T")
+
 
 @parser_factory
-async def list_of_xs():
+async def list_of_xs() -> List[str]:
     await exactly("[")
     xs = await separated_nonempty_list(item=exactly("X"), sep=exactly(", "))
     await exactly("]")
@@ -32,9 +39,14 @@ async def n_bangs():
 assert run_parser(n_bangs(), "12!!!!!!!!!!!!") == ("", 12)
 assert run_parser(n_bangs(), "3!") == None
 
+A = TypeVar("A")
+B = TypeVar("B")
+
 
 @parser_factory
-async def separated_pair(first, sep, second):
+async def separated_pair(
+    first: ParserThunk[A], sep, second: ParserThunk[B]
+) -> Tuple[A, B]:
     fst = await first
     await sep
     snd = await second
@@ -42,7 +54,7 @@ async def separated_pair(first, sep, second):
 
 
 @parser_factory
-async def delimited(left, target, right):
+async def delimited(left, target: ParserThunk[T], right) -> T:
     await left
     value = await target
     await right
@@ -58,11 +70,11 @@ pair_parser = delimited(
 assert run_parser(pair_parser, "(1, 2)") == ("", ("1", "2"))
 
 
-p = either(exactly("foo"), exactly("bar"), exactly("baz"))
-assert run_parser(p, "foo") == ("", "foo")
-assert run_parser(p, "bar") == ("", "bar")
-assert run_parser(p, "baz") == ("", "baz")
-assert run_parser(p, "qux") == None
+foo_bar_or_baz = either(exactly("foo"), exactly("bar"), exactly("baz"))
+assert run_parser(foo_bar_or_baz, "foo") == ("", "foo")
+assert run_parser(foo_bar_or_baz, "bar") == ("", "bar")
+assert run_parser(foo_bar_or_baz, "baz") == ("", "baz")
+assert run_parser(foo_bar_or_baz, "qux") == None
 
 
 print("✅ All tests passed.")

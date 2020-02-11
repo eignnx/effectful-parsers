@@ -1,6 +1,5 @@
-import asyncio
 from abc import ABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import wraps
 from typing import (
     Any,
@@ -23,7 +22,8 @@ PRes = Optional[Tuple[str, T]]
 ParserCoro = Coroutine[Eff, Optional[Resp], T]
 
 
-@dataclass
+# TODO: Make it a dataclass once https://github.com/python/mypy/issues/5485 is
+# resolved.
 class ParserFactory(Generic[Eff, Resp, T]):
     """
     Allows a `ParserCoro` coroutine to be constructed repeatedly. This class's
@@ -31,13 +31,27 @@ class ParserFactory(Generic[Eff, Resp, T]):
     a `ParserCoro[Eff, Resp, T]`.
     """
 
-    factory: Callable[[], ParserCoro[Eff, Resp, T]]
+    def __init__(self, factory: Callable[[], ParserCoro[Eff, Resp, T]]):
+        self.factory = factory
+
+    def __repr__(self):
+        cls_name = self.__class__.__name__
+        return f"{cls_name}(factory={self.factory!r})"
 
     def make(self) -> ParserCoro[Eff, Resp, T]:
         """
         Returns a new ParserCoro coroutine produced by the `self.factory` function.
         """
         return self.factory()
+
+    def __call__(self):
+        """
+        Since `ParserThunk[T]` is part of this module's API, `ParserFactory`
+        objects have a __call__ method defined on them in order to justify
+        users' potential intuition that a `ParserThunk` (which is an alias to
+        `ParserFactory`) is callable.
+        """
+        return self.make()
 
     def __await__(self):
         """
@@ -63,6 +77,10 @@ def parser_factory(
         return ParserFactory(lambda: f(*args, **kwargs))
 
     return factory_builder
+
+
+"""A `ParserThunk[T]` is a user-friendly parser-factory type-alias."""
+ParserThunk = ParserFactory[Any, Any, T]
 
 
 @dataclass
@@ -105,11 +123,17 @@ async def many(parser: ParserFactory[Eff, Resp, T]):
     return await Many(parser)
 
 
-@dataclass
+# TODO: Make it a dataclass once https://github.com/python/mypy/issues/5485 is
+# resolved.
 class TakeWhile(Effect):
     """Consumes input while the char -> bool `predicate` holds."""
 
-    predicate: Callable[[str], bool]
+    def __init__(self, predicate: Callable[[str], bool]):
+        self.predicate = predicate
+
+    def __repr__(self):
+        cls_name = self.__class__.__name__
+        return f"{cls_name}(predicate={self.predicate!r})"
 
 
 @parser_factory
@@ -146,7 +170,7 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> PRes[T]
             if prefix != "" or parsed != target:
                 return None
             else:
-                send_value = parsed
+                send_value = cast(Resp, parsed)
                 txt = rest
 
         elif isinstance(got, Many):
@@ -160,7 +184,7 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> PRes[T]
                     txt = rest
                 else:
                     break
-            send_value = collected
+            send_value = cast(Resp, collected)
 
         elif isinstance(got, TakeWhile):
             predicate = got.predicate
@@ -168,7 +192,7 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> PRes[T]
             for i, ch in enumerate(txt):
                 if not predicate(ch):
                     break
-            send_value, txt = txt[:i], txt[i:]
+            send_value, txt = cast(Resp, txt[:i]), txt[i:]
 
         elif isinstance(got, Either):
             for sub_parser in got.parsers:
@@ -176,7 +200,7 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> PRes[T]
                 if res:
                     rest, parsed = res
                     txt = rest
-                    send_value = parsed
+                    send_value = cast(Resp, parsed)
                     break
             else:
                 # If none of the parsers succeed...
@@ -187,9 +211,7 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> PRes[T]
 
 
 @parser_factory
-async def many1(
-    parser: ParserFactory[Eff, Resp, T]
-) -> ParserFactory[Eff, Resp, List[T]]:
+async def many1(parser: ParserFactory[Eff, Resp, T]) -> List[T]:
     first = await parser
     rest = await many(parser)
     return [first] + rest
@@ -204,13 +226,13 @@ async def preceded(prefix: ParserFactory, target: ParserFactory):
 @parser_factory
 async def separated_nonempty_list(
     item: ParserFactory[Eff, Resp, T], sep: ParserFactory
-) -> ParserFactory[Eff, Resp, List[T]]:
+) -> List[T]:
     first = await item
     rest = await many(preceded(sep, item))
     return [first] + rest
 
 
 @parser_factory
-async def nat() -> ParserFactory[Eff, Resp, int]:
+async def nat() -> int:
     digits = await take_while(lambda ch: ch.isdigit())
     return int(digits)
