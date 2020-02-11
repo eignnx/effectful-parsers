@@ -227,8 +227,14 @@ async def many(parser: ParserFactory[Eff, Resp, T]):
 class TakeWhile(Effect[str], ErrDescribe):
     """Consumes input while the char -> bool `predicate` holds."""
 
-    def __init__(self, predicate: Callable[[str], bool], allow_empty: bool = True):
+    def __init__(
+        self,
+        predicate: Callable[[str], bool],
+        pred_name: Optional[str] = None,
+        allow_empty: bool = True,
+    ):
         self.predicate = predicate
+        self.pred_name = pred_name
         self.allow_empty = allow_empty
 
     def __repr__(self):
@@ -246,20 +252,33 @@ class TakeWhile(Effect[str], ErrDescribe):
             return Success(rest=txt[i:], parsed=txt[:i])
 
     def err_describe(self) -> str:
+        pred_name = self.pred_name if self.pred_name else repr(self.predicate)
         return (
-            f"The predicate '{self.predicate!r}' given to "
+            f"The predicate '{pred_name}' given to "
             f"`take_nonempty_while` never matched any of the input."
         )
 
 
 @parser_factory
-async def take_while(predicate: Callable[[str], bool]):
+async def take_while(predicate: Callable[[str], bool]) -> str:
+    """
+    Consumes characters one at a time, and stops when `predicate` applied on
+    the next character is `False`. Be aware that this parser will succeed when
+    given the empty string, or if the first character encountered does NOT
+    satisfy `predicate`.
+    """
     return await TakeWhile(predicate)
 
 
 @parser_factory
-async def take_nonempty_while(predicate: Callable[[str], bool]):
-    return await TakeWhile(predicate, allow_empty=False)
+async def take_nonempty_while(
+    predicate: Callable[[str], bool], pred_name: Optional[str] = None
+) -> str:
+    """
+    The `pred_name` parameter is optional, but when provided, can give better
+    error reporting upon parse failure.
+    """
+    return await TakeWhile(predicate, pred_name=pred_name, allow_empty=False)
 
 
 @dataclass
@@ -335,5 +354,5 @@ async def nat() -> int:
     def is_digit(ch: str):
         return ch.isdigit()
 
-    digits = await take_nonempty_while(is_digit)
+    digits = await take_nonempty_while(is_digit, pred_name="is_digit")
     return int(digits)
