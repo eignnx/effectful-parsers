@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from functools import wraps
+import re
 from typing import (
     Any,
     Callable,
@@ -13,6 +14,7 @@ from typing import (
     List,
     NamedTuple,
     Optional,
+    Text,
     Tuple,
     TypeVar,
     Union,
@@ -304,6 +306,26 @@ class Either(Effect[T], Generic[Eff, Resp, T], ErrDescribe):
 @parser_factory
 async def either(*parsers: ParserFactory[Eff, Resp, T]) -> ParserCoro[Eff, Resp, T]:
     return await Either(parsers)
+
+
+@dataclass
+class Matches(Effect[str], ErrDescribe):
+    re: re.Pattern
+
+    def perform(self, txt: str) -> ParseResult[str]:
+        match = self.re.match(txt)
+        if match is None:
+            return Failure(txt, reason=self)
+        else:
+            return Success(parsed=match.group(), rest=txt[match.end() :])
+
+    def err_describe(self) -> str:
+        return f"The regex '{self.re.pattern}' did not match the beginning of the input text."
+
+
+@parser_factory
+async def matches(re_src: Text, **compile_kwargs):
+    return await Matches(re.compile(re_src, **compile_kwargs))
 
 
 def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseResult[T]:
