@@ -40,6 +40,12 @@ assert run_parser(n_bangs(), "12!!!!!!!!!!!!") == Success(12)
 assert run_parser(n_bangs(), "3!").failed
 print(run_parser(n_bangs(), "3!"))
 
+
+assert run_parser(nat(), "123").succeeded
+assert run_parser(nat(), "asdf").failed
+print(run_parser(nat(), "asdf"))
+
+
 A = TypeVar("A")
 B = TypeVar("B")
 
@@ -63,12 +69,14 @@ async def delimited(left, target: ParserThunk[T], right) -> T:
 
 
 pair_parser = delimited(
-    exactly("("),
-    separated_pair(exactly("1"), exactly(", "), exactly("2")),
-    exactly(")"),
+    exactly("("), separated_pair(nat(), exactly(", "), nat()), exactly(")"),
 )
 
-assert run_parser(pair_parser, "(1, 2)") == Success(("1", "2"))
+assert run_parser(pair_parser, "(1, 2)") == Success((1, 2))
+assert run_parser(pair_parser, "(1, 2").failed
+print(run_parser(pair_parser, "(1, 2"))
+assert run_parser(pair_parser, "(1, x)").failed
+print(run_parser(pair_parser, "(1, x)"))
 
 
 foo_bar_or_baz = either(exactly("foo"), exactly("bar"), exactly("baz"))
@@ -79,4 +87,7 @@ assert run_parser(foo_bar_or_baz, "qux").failed
 print(run_parser(foo_bar_or_baz, "qux"))
 
 
+print()
+print("--------------------")
 print("✅ All tests passed.")
+print("--------------------")

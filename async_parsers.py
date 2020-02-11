@@ -55,6 +55,7 @@ class Success(ParseResult[T]):
 class Failure(ParseResult[T], ErrDescribe):
     rest: str
     reason: Optional[ErrDescribe] = field(default=None)
+    trace: List[Tuple[str, ParserFactory]] = field(default_factory=list)
 
     SUCCESSFUL: ClassVar[bool] = False
 
@@ -63,7 +64,18 @@ class Failure(ParseResult[T], ErrDescribe):
         if self.reason is None:
             return preamble
         else:
-            return f"{preamble} because:\n{self.reason.err_describe()}"
+            context = "\n".join(
+                (
+                    f"\t* During attempted parsing with `{parser!s}` at '{txt}'..."
+                    for txt, parser in self.trace
+                )
+            )
+            main_error = self.reason.err_describe()
+            return f"{preamble} because:\n{context}\n\t- {main_error}\n"
+
+    def add_parser_context(self, txt: str, parser_factory: ParserFactory) -> Failure[T]:
+        self.trace.append((txt, parser_factory))
+        return self
 
     def __str__(self) -> str:
         return self.err_describe()
@@ -81,8 +93,10 @@ class ParserFactory(Generic[Eff, Resp, T]):
     a `ParserCoro[Eff, Resp, T]`.
     """
 
-    def __init__(self, factory: Callable[[], ParserCoro[Eff, Resp, T]]):
+    def __init__(self, factory: Callable[..., ParserCoro[Eff, Resp, T]], args, kwargs):
         self.factory = factory
+        self.args = args
+        self.kwargs = kwargs
 
     def __repr__(self):
         cls_name = self.__class__.__name__
@@ -92,7 +106,7 @@ class ParserFactory(Generic[Eff, Resp, T]):
         """
         Returns a new ParserCoro coroutine produced by the `self.factory` function.
         """
-        return self.factory()
+        return self.factory(*self.args, **self.kwargs)
 
     def __call__(self):
         """
@@ -112,6 +126,17 @@ class ParserFactory(Generic[Eff, Resp, T]):
         # I don't understand this syntax. See: https://stackoverflow.com/a/33420721/9045161
         return self.make().__await__()
 
+    def __str__(self) -> str:
+        factory_name = self.factory.__name__
+
+        def maybe_repr(x) -> str:
+            return str(x) if isinstance(x, ParserFactory) else repr(x)
+
+        args = ", ".join((maybe_repr(arg) for arg in self.args))
+        kwargs = ", ".join((f"{name}={value!r}" for name, value in self.kwargs.items()))
+        args_and_kwargs = f"{args}, {kwargs}" if kwargs else args
+        return f"{factory_name}({args_and_kwargs})"
+
 
 def parser_factory(
     f: Callable[..., ParserCoro[Eff, Resp, T]]
@@ -123,11 +148,7 @@ def parser_factory(
     """
 
     def factory_builder(*args, **kwargs) -> ParserFactory[Eff, Resp, T]:
-        @wraps(f)
-        def thunk():
-            return f(*args, **kwargs)
-
-        return ParserFactory(thunk)
+        return ParserFactory(f, args, kwargs)
 
     return factory_builder
 
@@ -170,7 +191,7 @@ class Exactly(Effect[str], ErrDescribe):
             return Success(rest=rest, parsed=parsed)
 
     def err_describe(self) -> str:
-        return f"\t - Expected exactly '{self.target}'"
+        return f"Expected exactly '{self.target}'"
 
 
 @parser_factory
@@ -203,11 +224,12 @@ async def many(parser: ParserFactory[Eff, Resp, T]):
 
 # TODO: Make it a dataclass once https://github.com/python/mypy/issues/5485 is
 # resolved.
-class TakeWhile(Effect[str]):
+class TakeWhile(Effect[str], ErrDescribe):
     """Consumes input while the char -> bool `predicate` holds."""
 
-    def __init__(self, predicate: Callable[[str], bool]):
+    def __init__(self, predicate: Callable[[str], bool], allow_empty: bool = True):
         self.predicate = predicate
+        self.allow_empty = allow_empty
 
     def __repr__(self):
         cls_name = self.__class__.__name__
@@ -218,12 +240,26 @@ class TakeWhile(Effect[str]):
         for i, ch in enumerate(txt):
             if not self.predicate(ch):
                 break
-        return Success(rest=txt[i:], parsed=txt[:i])
+        if not self.allow_empty and i == 0:
+            return Failure(txt, reason=self)
+        else:
+            return Success(rest=txt[i:], parsed=txt[:i])
+
+    def err_describe(self) -> str:
+        return (
+            f"The predicate '{self.predicate!r}' given to "
+            f"`take_nonempty_while` never matched any of the input."
+        )
 
 
 @parser_factory
 async def take_while(predicate: Callable[[str], bool]):
     return await TakeWhile(predicate)
+
+
+@parser_factory
+async def take_nonempty_while(predicate: Callable[[str], bool]):
+    return await TakeWhile(predicate, allow_empty=False)
 
 
 @dataclass
@@ -242,19 +278,8 @@ class Either(Effect[T], Generic[Eff, Resp, T], ErrDescribe):
             return Failure(txt, reason=self)
 
     def err_describe(self) -> str:
-        names = (parser.factory.__name__ for parser in self.parsers)
-
-        def args(parser_factory: ParserFactory) -> Iterable[str]:
-            factory = parser_factory.factory
-            captured_args_cell = factory.__closure__[0]
-            args_tup = captured_args_cell.cell_contents
-            for arg in args_tup:
-                yield repr(arg)
-
-        arg_lists = (", ".join(args(parser)) for parser in self.parsers)
-        calls = (f"{name}({args})" for name, args in zip(names, arg_lists))
-        ps = "\n".join((f"\t\t- {call}" for call in calls))
-        return f"\t- None of the following parsers succeeded:\n{ps}"
+        ps = "\n".join((f"\t\t- {parser}" for parser in self.parsers))
+        return f"None of the following parsers succeeded:\n{ps}"
 
 
 @parser_factory
@@ -278,7 +303,7 @@ def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseRe
             if isinstance(res, Success):
                 txt, send_value = res.rest, res.parsed
             elif isinstance(res, Failure):
-                return Failure(txt, reason=res)
+                return res.add_parser_context(txt, parser_factory)
         else:
             raise Exception(f"Expected parser object, got {got}")
 
@@ -307,5 +332,8 @@ async def separated_nonempty_list(
 
 @parser_factory
 async def nat() -> int:
-    digits = await take_while(lambda ch: ch.isdigit())
+    def is_digit(ch: str):
+        return ch.isdigit()
+
+    digits = await take_nonempty_while(is_digit)
     return int(digits)
