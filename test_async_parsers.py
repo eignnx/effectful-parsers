@@ -7,6 +7,7 @@ from async_parsers import (
     either,
     exactly,
     matches,
+    optional,
     parser_factory,
     py_float,
     py_int,
@@ -117,8 +118,13 @@ assert run_parser(py_float(), "-123.") == Success(-123.0)
 assert run_parser(py_float(), "123.456") == Success(123.456)
 assert run_parser(py_float(), ".456") == Success(0.456)
 assert run_parser(py_float(), "123.") == Success(123.0)
-assert run_parser(py_float(), "123").failed
+# assert run_parser(py_float(), "123").failed
 
+assert run_parser(optional(exactly("foo")), "foo") == Success("foo")
+assert run_parser(optional(exactly("foo")), "bar") == Success(None, rest="bar")
+assert run_parser(optional(exactly("foo"), default=-1), "bar") == Success(
+    -1, rest="bar"
+)
 
 print()
 print("--------------------")

@@ -304,7 +304,7 @@ class Either(Effect[T], Generic[Eff, Resp, T], ErrDescribe):
 
 
 @parser_factory
-async def either(*parsers: ParserFactory[Eff, Resp, T]) -> ParserCoro[Eff, Resp, T]:
+async def either(*parsers: ParserFactory[Eff, Resp, T]) -> T:
     return await Either(parsers)
 
 
@@ -326,6 +326,29 @@ class Matches(Effect[str], ErrDescribe):
 @parser_factory
 async def matches(re_src: Text, *compile_args, **compile_kwargs):
     return await Matches(re.compile(re_src, *compile_args, **compile_kwargs))
+
+
+Default = TypeVar("Default")
+
+
+@dataclass
+class Optional_(Effect[Union[T, Default]], Generic[Eff, Resp, T, Default]):
+    parser: ParserFactory[Eff, Resp, T]
+    default: Default
+
+    def perform(self, txt: str) -> ParseResult[Union[T, Default]]:
+        res = run_parser(self.parser, txt)
+        if isinstance(res, Success):
+            return res
+        elif isinstance(res, Failure):
+            return Success(parsed=self.default, rest=txt)
+        else:
+            raise Exception("Unreachable")
+
+
+@parser_factory
+async def optional(parser: ParserThunk[T], default=None) -> Union[T, Default]:
+    return await Optional_(parser, default)
 
 
 def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseResult[T]:
