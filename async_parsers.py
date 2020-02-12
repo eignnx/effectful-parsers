@@ -312,7 +312,7 @@ class Either(Effect[T], Generic[Eff, Resp, T], ErrDescribe):
 
 
 @parser_factory
-async def either(*parsers: ParserFactory[Eff, Resp, T]) -> T:
+async def either(*parsers: ParserFactory[Any, Any, T]) -> T:
     return await Either(parsers)
 
 
@@ -457,9 +457,36 @@ async def py_int() -> int:
     """
     Parses a Python int.
     """
-    # See https://docs.python.org/3/library/re.html#simulating-scanf
-    digits = await matches(r"[-+]?(0[xX][\dA-Fa-f]+|0[0-7]*|\d+)")
-    return int(digits)
+    # FROM https://docs.python.org/3.9/reference/lexical_analysis.html#integer-literals
+    # integer      ::=  decinteger | bininteger | octinteger | hexinteger
+    # decinteger   ::=  nonzerodigit (["_"] digit)* | "0"+ (["_"] "0")*
+    # bininteger   ::=  "0" ("b" | "B") (["_"] bindigit)+
+    # octinteger   ::=  "0" ("o" | "O") (["_"] octdigit)+
+    # hexinteger   ::=  "0" ("x" | "X") (["_"] hexdigit)+
+    # nonzerodigit ::=  "1"..."9"
+    # digit        ::=  "0"..."9"
+    # bindigit     ::=  "0" | "1"
+    # octdigit     ::=  "0"..."7"
+    # hexdigit     ::=  digit | "a"..."f" | "A"..."F"
+
+    @dataclass
+    class Base:
+        n: int
+
+        def __call__(self, digits: str) -> int:
+            return int(digits.lstrip("_"), self.n)
+
+    dec_integer = matches(r"[1-9](_?[0-9])*|0+(_?0)*").map(Base(10))
+    hex_integer = preceded(
+        matches(r"0[xX]"), matches(r"(_?[0-9a-fA-F])+").map(Base(16))
+    )
+    oct_integer = preceded(matches(r"0[oO]"), matches(r"(_?[0-7])+").map(Base(8)))
+    bin_integer = preceded(matches(r"0[bB]"), matches(r"(_?[01])+").map(Base(2)))
+
+    sign = await matches(r"[+-]?").map(lambda s: -1 if s == "-" else 1)
+    return await either(hex_integer, oct_integer, bin_integer, dec_integer).map(
+        lambda x: sign * x
+    )
 
 
 @parser_factory

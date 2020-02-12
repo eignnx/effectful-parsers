@@ -152,6 +152,31 @@ assert run_parser(recognize(preceded(exactly("#"), py_int())), "#123") == Succes
     "#123"
 )
 
+int_passing_examples = [
+    ("0", 0),
+    ("00000", 00000),
+    ("0_0_0_000_0", 0_0_0_000_0),
+    ("-00000", -00000),
+    ("1", 1),
+    ("1234", 1234),
+    ("123_532_25", 123_532_25),
+    ("-1", -1),
+    ("-0", -0),
+    ("0x2_3Fac_E", 0x2_3FAC_E),
+    ("0o45_6701_20", 0o45_6701_20),
+    ("0b_1001_1", 0b_1001_1),
+    ("-0B_1101", -0b_1101),
+    ("-0O_77171", -0o_77171),
+    ("-0X_DEADBEEF", -0x_DEADBEEF),
+]
+for example, ans in int_passing_examples:
+    try:
+        assert run_parser(py_int(), example) == Success(ans)
+    except AssertionError:
+        print("Failed for example:", repr(example))
+        print(run_parser(py_int(), example))
+        raise
+
 print()
 print("--------------------")
 print("✅ All tests passed.")
