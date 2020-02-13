@@ -89,6 +89,10 @@ ParserCoro = Coroutine[Eff, Optional[Resp], T]
 
 class Combinator(Generic[T], ABC):
     @abstractmethod
+    def __await__(self):
+        pass
+
+    @abstractmethod
     def make(self) -> ParserCoro[Any, Any, T]:
         pass
 
@@ -340,7 +344,7 @@ class Either(Effect[T], Generic[Eff, Resp, T], ErrDescribe):
         return " | ".join((str(parser) for parser in self.parsers))
 
 
-def either(*parsers: ParserFactory[Any, Any, T]) -> Combinator[T]:
+def either(*parsers: Combinator[T]) -> Combinator[T]:
     return Either(parsers)
 
 
