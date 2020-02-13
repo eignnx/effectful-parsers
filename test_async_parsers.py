@@ -191,10 +191,9 @@ for example in int_passing_examples:
 
 
 test(exactly("[") >> py_int() << exactly("]"), "[123]", Success(123))
-print(exactly("[") >> py_int() << exactly("]"))
-print(exactly("fooooo") | exactly("foo") | exactly("f"))
 test(exactly("fooooo") | exactly("foo") | exactly("f"), "fooooo", Success("fooooo"))
-test(exactly("fooooo") | exactly("foo").map(int) | exactly("f"), "f", Success("f"))
+test(exactly("fooooo") | exactly("foo") | exactly("f").map(ord), "f", Success(ord("f")))
+test(py_int().map(lambda x: x * x).map(lambda y: y + 1), "12", Success(12 * 12 + 1))
 
 
 if errors_so_far == 0:

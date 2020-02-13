@@ -58,7 +58,7 @@ class Success(ParseResult[T]):
 class Failure(ParseResult[T], ErrDescribe):
     rest: str
     reason: Optional[ErrDescribe] = field(default=None)
-    trace: List[Tuple[str, ParserFactory]] = field(default_factory=list)
+    trace: List[Tuple[str, Combinator]] = field(default_factory=list)
 
     SUCCESSFUL: ClassVar[bool] = False
 
@@ -76,7 +76,7 @@ class Failure(ParseResult[T], ErrDescribe):
             main_error = self.reason.err_describe()
             return f"{preamble} because:\n{context}\n\t- {main_error}\n"
 
-    def add_parser_context(self, txt: str, parser_factory: ParserFactory) -> Failure[T]:
+    def add_parser_context(self, txt: str, parser_factory: Combinator) -> Failure[T]:
         self.trace.append((txt, parser_factory))
         return self
 
@@ -87,9 +87,27 @@ class Failure(ParseResult[T], ErrDescribe):
 ParserCoro = Coroutine[Eff, Optional[Resp], T]
 
 
+class Combinator(Generic[T], ABC):
+    @abstractmethod
+    def make(self) -> ParserCoro[Any, Any, T]:
+        pass
+
+    def map(self, f: Callable[[T], U]):
+        return Map(f, self)
+
+    def __or__(self, other: Combinator[T]) -> Combinator[T]:
+        return Either((self, other))
+
+    def __lshift__(self, other: Combinator[U]) -> Combinator[T]:
+        return terminated(self, other)
+
+    def __rshift__(self, other: Combinator[U]) -> Combinator[U]:
+        return preceded(self, other)
+
+
 # TODO: Make it a dataclass once https://github.com/python/mypy/issues/5485 is
 # resolved.
-class ParserFactory(Generic[Eff, Resp, T]):
+class ParserFactory(Generic[Eff, Resp, T], Combinator[T]):
     """
     Allows a `ParserCoro` coroutine to be constructed repeatedly. This class's
     constructor accepts a "thunk" (a function of no arguments) which produces
@@ -133,28 +151,12 @@ class ParserFactory(Generic[Eff, Resp, T]):
         factory_name = self.factory.__name__
 
         def maybe_repr(x) -> str:
-            return str(x) if isinstance(x, ParserFactory) else repr(x)
+            return str(x) if isinstance(x, (ParserFactory, Effect)) else repr(x)
 
         args = ", ".join((maybe_repr(arg) for arg in self.args))
         kwargs = ", ".join((f"{name}={value!r}" for name, value in self.kwargs.items()))
         args_and_kwargs = f"{args}, {kwargs}" if kwargs else args
         return f"{factory_name}({args_and_kwargs})"
-
-    def map(self, f: Callable[[T], U]) -> ParserFactory[Eff, Resp, U]:
-        @parser_factory
-        async def map(f, p) -> U:
-            return await Map(f, p)
-
-        return map(f, self)
-
-    def __or__(self, other):
-        return either(self, other)
-
-    def __lshift__(self, other):
-        return terminated(self, other)
-
-    def __rshift__(self, other):
-        return preceded(self, other)
 
 
 def parser_factory(
@@ -176,7 +178,7 @@ def parser_factory(
 ParserThunk = ParserFactory[Any, Any, T]
 
 
-class Effect(Generic[T], ABC):
+class Effect(Generic[T], Combinator[T], ABC):
     """
     An `Effect` is a message object which knows how to be awaited. When it is
     awaited, it simply returns a reference to itself to the runtime. The runtime
@@ -190,6 +192,9 @@ class Effect(Generic[T], ABC):
     @abstractmethod
     def perform(self, txt: str) -> ParseResult[T]:
         pass
+
+    def make(self):
+        return self.__await__()
 
 
 @dataclass
@@ -304,7 +309,19 @@ async def take_nonempty_while(
 class Either(Effect[T], Generic[Eff, Resp, T], ErrDescribe):
     """Returns the output of the first parser in `parsers` that succeeds."""
 
-    parsers: Iterable[ParserFactory[Eff, Resp, T]]
+    parsers: Iterable[Combinator[T]]
+
+    def __post_init__(self):
+        # Speeds up runtime parsing execution by flattening an
+        # `either(either(a, b), c)` into an `either(a, b, c)`.
+        flattened: List[Combinator[T]] = []
+        for sub_parser in self.parsers:
+            if isinstance(sub_parser, Either):
+                for sub_sub_parser in sub_parser.parsers:
+                    flattened.append(sub_sub_parser)
+            else:
+                flattened.append(sub_parser)
+        self.parsers = flattened
 
     def perform(self, txt: str) -> ParseResult[T]:
         for sub_parser in self.parsers:
@@ -319,10 +336,12 @@ class Either(Effect[T], Generic[Eff, Resp, T], ErrDescribe):
         ps = "\n".join((f"\t\t- {parser}" for parser in self.parsers))
         return f"None of the following parsers succeeded:\n{ps}"
 
+    def __str__(self):
+        return " | ".join((str(parser) for parser in self.parsers))
 
-@parser_factory
-async def either(*parsers: ParserFactory[Any, Any, T]) -> T:
-    return await Either(parsers)
+
+def either(*parsers: ParserFactory[Any, Any, T]) -> Combinator[T]:
+    return Either(parsers)
 
 
 @dataclass
@@ -369,7 +388,7 @@ async def optional(parser: ParserThunk[T], default=None) -> Union[T, Default]:
 
 
 class Map(Effect[U], Generic[Eff, Resp, T, U]):
-    def __init__(self, f: Callable[[T], U], parser: ParserFactory[Eff, Resp, T]):
+    def __init__(self, f: Callable[[T], U], parser: Combinator[T]):
         self.f = f
         self.parser = parser
 
@@ -379,6 +398,9 @@ class Map(Effect[U], Generic[Eff, Resp, T, U]):
             return Success(parsed=self.f(res.parsed), rest=res.rest)
         else:
             return cast(ParseResult[U], res)
+
+    def __str__(self):
+        return f"{self.parser}.map({self.f!r})"
 
 
 @dataclass
@@ -403,10 +425,10 @@ async def recognize(parser):
     return await Recognize(parser)
 
 
-def run_parser(parser_factory: ParserFactory[Eff, Resp, T], txt: str) -> ParseResult[T]:
+def run_parser(parser_factory: Combinator[T], txt: str) -> ParseResult[T]:
     parser = parser_factory.make()
 
-    send_value: Optional[Resp] = None
+    send_value: Optional[Any] = None
 
     while True:
         try:
@@ -479,21 +501,23 @@ async def py_int() -> int:
     # hexdigit     ::=  digit | "a"..."f" | "A"..."F"
 
     @dataclass
-    class Base:
+    class ToBase:
         n: int
 
         def __call__(self, digits: str) -> int:
             return int(digits.lstrip("_"), self.n)
 
-    dec_integer = matches(r"[1-9](_?[0-9])*|0+(_?0)*").map(Base(10))
-    hex_integer = preceded(
-        matches(r"0[xX]"), matches(r"(_?[0-9a-fA-F])+").map(Base(16))
-    )
-    oct_integer = preceded(matches(r"0[oO]"), matches(r"(_?[0-7])+").map(Base(8)))
-    bin_integer = preceded(matches(r"0[bB]"), matches(r"(_?[01])+").map(Base(2)))
+        def __repr__(self):
+            return f"to_base({self.n})"
+
+    dec_integer = matches(r"[1-9](_?[0-9])*|0+(_?0)*").map(ToBase(10))
+    hex_integer = matches(r"0[xX]") >> matches(r"(_?[0-9a-fA-F])+").map(ToBase(16))
+
+    oct_integer = matches(r"0[oO]") >> matches(r"(_?[0-7])+").map(ToBase(8))
+    bin_integer = matches(r"0[bB]") >> matches(r"(_?[01])+").map(ToBase(2))
 
     sign = await matches(r"[+-]?").map(lambda s: -1 if s == "-" else 1)
-    return await either(hex_integer, oct_integer, bin_integer, dec_integer).map(
+    return await (hex_integer | oct_integer | bin_integer | dec_integer).map(
         lambda x: sign * x
     )
 
