@@ -1,9 +1,9 @@
-from typing import List, Tuple, TypeVar, cast
 import math
+from typing import List, Tuple, TypeVar, cast
 
-from effectful_parsers.lib import (
+from effectful_parsers import (
+    Combinator,
     Failure,
-    ParserThunk,
     Success,
     either,
     exactly,
@@ -86,7 +86,7 @@ B = TypeVar("B")
 
 @parser_factory
 async def separated_pair(
-    first: ParserThunk[A], sep, second: ParserThunk[B]
+    first: Combinator[A], sep, second: Combinator[B]
 ) -> Tuple[A, B]:
     fst = await first
     await sep
@@ -95,7 +95,7 @@ async def separated_pair(
 
 
 @parser_factory
-async def delimited(left, target: ParserThunk[T], right) -> T:
+async def delimited(left, target: Combinator[T], right) -> T:
     await left
     value = await target
     await right
