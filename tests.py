@@ -1,7 +1,7 @@
 from typing import List, Tuple, TypeVar, cast
 import math
 
-from async_parsers import (
+from lib import (
     Failure,
     ParserThunk,
     Success,
