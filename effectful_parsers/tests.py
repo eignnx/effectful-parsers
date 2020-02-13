@@ -1,7 +1,7 @@
 from typing import List, Tuple, TypeVar, cast
 import math
 
-from lib import (
+from effectful_parsers.lib import (
     Failure,
     ParserThunk,
     Success,
