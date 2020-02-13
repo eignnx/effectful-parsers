@@ -147,6 +147,15 @@ class ParserFactory(Generic[Eff, Resp, T]):
 
         return map(f, self)
 
+    def __or__(self, other):
+        return either(self, other)
+
+    def __lshift__(self, other):
+        return terminated(self, other)
+
+    def __rshift__(self, other):
+        return preceded(self, other)
+
 
 def parser_factory(
     f: Callable[..., ParserCoro[Eff, Resp, T]]

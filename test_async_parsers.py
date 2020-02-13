@@ -43,8 +43,8 @@ def test(parser, input, expected, print_failure=False):
         errors_so_far += 1
         print()
         print(f"~~~~ASSERTION ERROR #{errors_so_far}~~~~")
-        print(f"\trun_parser({parser}, {input!r}) != {expected}")
-        print(f"\tPARSE RESULT:```")
+        print(f"run_parser({parser}, {input!r}) != {expected}")
+        print(f"PARSE RESULT:```")
         print(actual)
         print("```")
         print()
