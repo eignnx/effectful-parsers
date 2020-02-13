@@ -60,6 +60,7 @@ async def py_int() -> int:
         n: int
 
         def __call__(self, digits: str) -> int:
+            # Python's `int` function doesn't understand leading underscores.
             return int(digits.lstrip("_"), self.n)
 
         def __repr__(self):
@@ -106,30 +107,18 @@ async def py_float(allow_special_values: bool = False) -> float:
 
     digits = matches(r"\d[_\d]*")
 
-    point_float = (
-        (digits >> exactly(".") >> digits)
-        | (exactly(".") >> digits)
-        | (digits << exactly("."))
-    )
+    dot = exactly(".")
+    point_float = digits >> dot >> digits | dot >> digits | digits << dot
 
-    @parser_factory
-    async def exponent():
-        await matches(r"[eE]")
-        await matches(r"[+-]?")
-        await digits
+    sign = matches(r"[+-]?")
+    exponent = matches(r"[eE]") >> sign >> digits
+    exponent_float = (point_float | digits) >> exponent
 
-    exponent_float = sequence(point_float | digits, exponent())
+    float_number = exponent_float | point_float
+    if allow_special_values:
+        float_number = (
+            float_number | exactly("nan") | exactly("inf") | exactly("Infinity")
+        )
 
-    special_values = (
-        [exactly("nan"), exactly("inf"), exactly("Infinity")]
-        if allow_special_values
-        else []
-    )
-
-    @parser_factory
-    async def py_float_format():
-        await matches(r"[+-]?")
-        await either(exponent_float, point_float, *special_values)
-
-    float_text = await recognize(py_float_format())
+    float_text: str = await recognize(sign >> float_number)
     return float(float_text)
