@@ -7,6 +7,7 @@ from effectful_parsers import (
     Success,
     either,
     exactly,
+    fail,
     matches,
     optional,
     parser_factory,
@@ -195,6 +196,20 @@ test(exactly("fooooo") | exactly("foo") | exactly("f"), "fooooo", Success("foooo
 test(exactly("fooooo") | exactly("foo") | exactly("f").map(ord), "f", Success(ord("f")))
 test(py_int().map(lambda x: x * x).map(lambda y: y + 1), "12", Success(12 * 12 + 1))
 
+
+@parser_factory
+async def square_integer():
+    n = await py_int()
+    if n < 0 or math.sqrt(n) * math.sqrt(n) != n:
+        await fail(f"The integer {n} is not a square.")
+    else:
+        return n
+
+
+test(square_integer(), "5", Failure)
+test(square_integer(), "16", Success(16))
+test(square_integer(), "-1", Failure, print_failure=True)
+test(square_integer(), "144", Success(144))
 
 if errors_so_far == 0:
     print()

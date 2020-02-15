@@ -218,9 +218,8 @@ class Exactly(Effect[str], ErrDescribe):
         return f"Expected exactly '{self.target}'"
 
 
-@parser_factory
-async def exactly(target: str):
-    return await Exactly(target)
+def exactly(target: str) -> Combinator[str]:
+    return Exactly(target)
 
 
 @dataclass
@@ -241,9 +240,8 @@ class Many(Effect[List[T]], Generic[Eff, Resp, T]):
         return Success(rest=txt, parsed=collected)
 
 
-@parser_factory
-async def many(parser: ParserFactory[Eff, Resp, T]):
-    return await Many(parser)
+def many(parser: ParserFactory[Eff, Resp, T]) -> Combinator[List[T]]:
+    return Many(parser)
 
 
 # TODO: Make it a dataclass once https://github.com/python/mypy/issues/5485 is
@@ -283,26 +281,24 @@ class TakeWhile(Effect[str], ErrDescribe):
         )
 
 
-@parser_factory
-async def take_while(predicate: Callable[[str], bool]) -> str:
+def take_while(predicate: Callable[[str], bool]) -> Combinator[str]:
     """
     Consumes characters one at a time, and stops when `predicate` applied on
     the next character is `False`. Be aware that this parser will succeed when
     given the empty string, or if the first character encountered does NOT
     satisfy `predicate`.
     """
-    return await TakeWhile(predicate)
+    return TakeWhile(predicate)
 
 
-@parser_factory
-async def take_nonempty_while(
+def take_nonempty_while(
     predicate: Callable[[str], bool], pred_name: Optional[str] = None
-) -> str:
+) -> Combinator[str]:
     """
     The `pred_name` parameter is optional, but when provided, can give better
     error reporting upon parse failure.
     """
-    return await TakeWhile(predicate, pred_name=pred_name, allow_empty=False)
+    return TakeWhile(predicate, pred_name=pred_name, allow_empty=False)
 
 
 @dataclass
@@ -359,9 +355,8 @@ class Matches(Effect[str], ErrDescribe):
         return f"The regex '{self.re.pattern}' did not match the beginning of the input text."
 
 
-@parser_factory
-async def matches(re_src: Text, *compile_args, **compile_kwargs):
-    return await Matches(re.compile(re_src, *compile_args, **compile_kwargs))
+def matches(re_src: Text, *compile_args, **compile_kwargs):
+    return Matches(re.compile(re_src, *compile_args, **compile_kwargs))
 
 
 Default = TypeVar("Default")
@@ -382,9 +377,8 @@ class Optional_(Effect[Union[T, Default]], Generic[Eff, Resp, T, Default]):
             raise Exception("Unreachable")
 
 
-@parser_factory
-async def optional(parser: Combinator[T], default=None) -> Union[T, Default]:
-    return await Optional_(parser, default)
+def optional(parser: Combinator[T], default=None) -> Optional_[Eff, Resp, T, Default]:
+    return Optional_(parser, default)
 
 
 class Map(Effect[U], Generic[Eff, Resp, T, U]):
@@ -416,13 +410,27 @@ class Recognize(Effect[str]):
             return cast(ParseResult[str], res)
 
 
-@parser_factory
-async def recognize(parser):
+def recognize(parser):
     """
     Runs the sub-pareser, but discards the result and instead returns the string
     that was accepted by the sub-parser.
     """
-    return await Recognize(parser)
+    return Recognize(parser)
+
+
+@dataclass
+class Fail(Effect[None], ErrDescribe):
+    reason: str
+
+    def perform(self, txt: str) -> ParseResult[None]:
+        return Failure(rest=txt, reason=self)
+
+    def err_describe(self) -> str:
+        return self.reason
+
+
+def fail(reason: str):
+    return Fail(reason=reason)
 
 
 @parser_factory
